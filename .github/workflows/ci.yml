@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches:   
+    - '**'
+  pull_request:
+    branches:   
+    - '**'
+
+jobs:
+  
+  test_and_deploy_if_main:
+    
+    runs-on: ubuntu-latest
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          pip install -r ./requirements.txt
+
+      - name: Build Docker image
+        run: docker build -t cron .
+
+      - name: start container
+        run: |
+          docker run -d cron
+
+      - name: Wait for app startup
+        run: |
+          sleep 3
+
+      - name: cleanup
+        run: |  
+          docker stop cron
+          docker rm -f cron
+
+      - name: Log in to Docker Hub
+        #if: github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        #if: github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/metrics:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/metrics:${{ github.sha }}
+
+      - name: Inject Docker Prefix (In-Place) and Deploy
+        #if: github.ref == 'refs/heads/main'
+        run: |
+          # 1. Setup variables
+          K8S_DIR="k8s"
+          PLACEHOLDER="__INJECT_DOCKERUSERNAME_IN_CI__"
+          DOCKERHUB_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
+          
+          echo "Injecting Docker Username into all files in $K8S_DIR..."
+
+          # 2. Loop through files and modify them IN-PLACE
+          # The -i flag tells sed to overwrite the file with the changes.
+          for K8S_FILE in $K8S_DIR/*.yaml; do
+            if [ -f "$K8S_FILE" ]; then
+               sed -i "s#${PLACEHOLDER}#${DOCKERHUB_USERNAME}#g" "$K8S_FILE"
+               echo "Updated $K8S_FILE"
+            fi
+          done
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Configure Kubernetes and deploy
+        run: |
+          echo "${KUBE_CONFIG}" | base64 -d > kubeconfig
+          
+          # 2. Set the KUBECONFIG environment variable for subsequent steps
+          export KUBECONFIG=kubeconfig
+          
+          # 3. Test the connection immediately (Recommended)
+          kubectl cluster-info
+          
+          echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV  
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+
+      - name: test access kube
+        run: |
+          kubectl get pods -n grp01eq14-namespace
+
+      - name: Deploy All
+        run: |
+          kubectl --kubeconfig=kubeconfig apply -f k8s
+        #if: github.ref == 'refs/heads/main'

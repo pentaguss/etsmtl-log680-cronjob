@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cronjob
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cronjob
+  template:
+    metadata:
+      labels:
+        app: cronjob
+    spec:
+      containers:
+        - name: mobilitysoft
+          image: __INJECT_DOCKERUSERNAME_IN_CI__/cronjob:latest
+          resources: 
+            requests:
+              cpu: "15m"      
+              memory: "15Mi" 
+            limits:
+              cpu: "50m"     
+              memory: "75Mi" 
+          #envFrom:
+          #  - configMapRef:
+          #      name: mobilitysoft-config
+          #  - secretRef:
+          #      name: mobilitysoft-secret
